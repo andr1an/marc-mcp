@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.25"
+  # Rename if you want a different binary name in archives/releases
+  BINARY_NAME: "your-binary-name"
+
+jobs:
+  # 1) Run the same tests as CI (Go matrix)
+  go-tests:
+    name: Tests (Go) / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -v ./...
+
+  # 2) Run Nix tests too (like your CI)
+  nix-tests:
+    name: Tests (Nix) / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build with Nix
+        run: nix develop -c go build -v ./...
+
+      - name: Test with Nix
+        run: nix develop -c go test -v ./...
+
+  # 3) Build release artifacts (cross-compile on Linux) + package as tgz/zip
+  build-artifacts:
+    name: Build artifacts / ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: [go-tests, nix-tests]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          # Windows arm64 may be fine for you; keep or drop as needed.
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          OUTDIR="dist/${VERSION}"
+          mkdir -p "$OUTDIR"
+
+          EXT=""
+          if [[ "${GOOS}" == "windows" ]]; then EXT=".exe"; fi
+
+          # You can adjust ./cmd/... if your main package isn't repo root.
+          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
+            go build -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -o "${OUTDIR}/${BINARY_NAME}_${GOOS}_${GOARCH}${EXT}" \
+              .
+
+      - name: Package (tgz/zip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          OUTDIR="dist/${VERSION}"
+          cd "$OUTDIR"
+
+          for f in ${BINARY_NAME}_*; do
+            base="${f%.*}"
+            if [[ "$f" == *.exe ]]; then
+              zip -9 "${base}.zip" "$f"
+            else
+              tar -czf "${base}.tar.gz" "$f"
+            fi
+          done
+
+          # Keep only archives + raw binaries if you want; here we keep both.
+          ls -lah
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ github.ref_name }}/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # 4) Create GitHub Release and upload all artifacts
+  release:
+    name: Publish GitHub Release
+    needs: [build-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p out
+          # Flatten all artifacts into out/
+          find release-dist -type f -maxdepth 3 -print0 | xargs -0 -I{} cp "{}" out/
+          cd out
+          sha256sum * > "checksums_${VERSION}.txt"
+          ls -lah
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
