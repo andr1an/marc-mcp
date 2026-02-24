@@ -39,10 +39,11 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Build with Nix
-        run: nix develop --command go build -v ./...
+        run: nix develop -c go build -v ./...
 
       - name: Test with Nix
-        run: nix develop --command go test -v ./...
+        run: nix develop -c go test -v ./...
