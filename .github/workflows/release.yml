@@ -13,12 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: "1.25"
-  # Rename if you want a different binary name in archives/releases
-  BINARY_NAME: "your-binary-name"
+  GO_VERSION: "1.24"
+  BINARY_NAME: "marc-mcp"
 
 jobs:
-  # 1) Run the same tests as CI (Go matrix)
   go-tests:
     name: Tests (Go) / ${{ matrix.os }}
     strategy:
@@ -41,7 +39,6 @@ jobs:
       - name: Test
         run: go test -v ./...
 
-  # 2) Run Nix tests too (like your CI)
   nix-tests:
     name: Tests (Nix) / ${{ matrix.os }}
     strategy:
@@ -61,9 +58,8 @@ jobs:
       - name: Test with Nix
         run: nix develop -c go test -v ./...
 
-  # 3) Build release artifacts (cross-compile on Linux) + package as tgz/zip
-  build-artifacts:
-    name: Build artifacts / ${{ matrix.goos }}-${{ matrix.goarch }}
+  build-binaries:
+    name: Build binaries / ${{ matrix.goos }}-${{ matrix.goarch }}
     needs: [go-tests, nix-tests]
     runs-on: ubuntu-latest
     strategy:
@@ -72,7 +68,7 @@ jobs:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
         exclude:
-          # Windows arm64 may be fine for you; keep or drop as needed.
+          # Keep/remove depending on whether you want Windows ARM64 builds
           - goos: windows
             goarch: arm64
     steps:
@@ -100,60 +96,75 @@ jobs:
           EXT=""
           if [[ "${GOOS}" == "windows" ]]; then EXT=".exe"; fi
 
-          # You can adjust ./cmd/... if your main package isn't repo root.
           CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
             go build -trimpath \
               -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -o "${OUTDIR}/${BINARY_NAME}_${GOOS}_${GOARCH}${EXT}" \
               .
 
-      - name: Package (tgz/zip)
+          ls -lah "${OUTDIR}"
+
+      - name: Upload binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ github.ref_name }}/${{ env.BINARY_NAME }}_${{ matrix.goos }}_${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 7
+
+  source-archives:
+    name: Build source archives
+    needs: [go-tests, nix-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create source archives
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
           OUTDIR="dist/${VERSION}"
-          cd "$OUTDIR"
+          mkdir -p "$OUTDIR"
 
-          for f in ${BINARY_NAME}_*; do
-            base="${f%.*}"
-            if [[ "$f" == *.exe ]]; then
-              zip -9 "${base}.zip" "$f"
-            else
-              tar -czf "${base}.tar.gz" "$f"
-            fi
-          done
+          # Create archives from the repository contents, excluding common junk.
+          # NOTE: GitHub auto-generates Source code (zip/tar.gz) too, but these are your custom-named ones.
+          git ls-files -z \
+            | tar --null -T - -czf "${OUTDIR}/${BINARY_NAME}-${VERSION}-src.tar.gz"
 
-          # Keep only archives + raw binaries if you want; here we keep both.
-          ls -lah
+          git ls-files -z \
+            | xargs -0 zip -9 -q "${OUTDIR}/${BINARY_NAME}-${VERSION}-src.zip"
 
-      - name: Upload artifacts
+          ls -lah "${OUTDIR}"
+
+      - name: Upload source artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/${{ github.ref_name }}/*
+          name: source-archives
+          path: dist/${{ github.ref_name }}/${{ env.BINARY_NAME }}-${{ github.ref_name }}-src.*
           if-no-files-found: error
           retention-days: 7
 
-  # 4) Create GitHub Release and upload all artifacts
   release:
     name: Publish GitHub Release
-    needs: [build-artifacts]
+    needs: [build-binaries, source-archives]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all build artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-dist
 
-      - name: Generate checksums
+      - name: Flatten + checksums
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
           mkdir -p out
-          # Flatten all artifacts into out/
-          find release-dist -type f -maxdepth 3 -print0 | xargs -0 -I{} cp "{}" out/
+
+          find release-dist -type f -print0 | xargs -0 -I{} cp "{}" out/
           cd out
           sha256sum * > "checksums_${VERSION}.txt"
           ls -lah

@@ -20,6 +20,53 @@
           }
       );
   in {
+    packages = forEachSupportedSystem ({
+      pkgs,
+      system,
+    }: rec {
+      default = marc-mcp;
+
+      marc-mcp = pkgs.buildGoModule {
+        pname = "marc-mcp";
+        version = self.shortRev or "dirty";
+        src = self;
+
+        vendorHash = "sha256-hX70z+6h9vf42y8fZu5cjf5UZzImf7hyYDBnHp2F+1Q=";
+
+        subPackages = ["."];
+
+        # Set CGO here (don’t use CGO_ENABLED = 0 as a derivation arg)
+        env = {
+          CGO_ENABLED = "0";
+        };
+
+        # Optional: remove this block if you don't have these vars in package main
+        ldflags = [
+          "-s"
+          "-w"
+          "-X=main.version=${self.ref or (self.shortRev or "dirty")}"
+          "-X=main.commit=${self.rev or (self.shortRev or "dirty")}"
+        ];
+
+        meta = with pkgs.lib; {
+          description = "MCP server for marc.info mailing list archive";
+          license = licenses.mit; # adjust if needed
+          mainProgram = "marc-mcp";
+        };
+      };
+    });
+
+    apps = forEachSupportedSystem ({system, ...}: {
+      default = {
+        type = "app";
+        program = "${self.packages.${system}.marc-mcp}/bin/marc-mcp";
+      };
+    });
+
+    checks = forEachSupportedSystem ({system, ...}: {
+      marc-mcp = self.packages.${system}.marc-mcp;
+    });
+
     devShells = forEachSupportedSystem (
       {
         pkgs,
