@@ -4,7 +4,7 @@ MCP server for accessing [marc.info](https://marc.info/) mailing list archives.
 
 ## Features
 
-- Browse mailing lists by category
+- Browse mailing lists by category or regex filter
 - List messages with pagination
 - Fetch full message content
 - Search by subject, author, or body
@@ -59,11 +59,12 @@ The server listens on `:8080` by default (streamable HTTP transport).
 
 ### list_mailing_lists
 
-List all available mailing lists, optionally filtered by category.
+List all available mailing lists, optionally filtered by category and/or name regex.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `category` | No | Filter by category (e.g., "Development", "Linux", "Security") |
+| `filter` | No | Filter list names by regular expression (e.g., `^linux`, `git.*`, `kernel`) |
 
 ### list_messages
 

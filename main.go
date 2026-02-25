@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 
 	"github.com/andr1an/marc-mcp/internal/marc"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,9 +28,12 @@ func main() {
 
 	// list_mailing_lists tool
 	listMailingListsTool := mcp.NewTool("list_mailing_lists",
-		mcp.WithDescription("List all available mailing lists from marc.info, optionally filtered by category"),
+		mcp.WithDescription("List all available mailing lists from marc.info, optionally filtered by category or name regex"),
 		mcp.WithString("category",
 			mcp.Description("Filter by category name (e.g., 'Development', 'Linux', 'Security')"),
+		),
+		mcp.WithString("filter",
+			mcp.Description("Filter list names by regular expression (e.g., 'git.*', '^linux', 'kernel')"),
 		),
 	)
 	s.AddTool(listMailingListsTool, listMailingListsHandler(client))
@@ -101,6 +105,16 @@ func main() {
 func listMailingListsHandler(client *marc.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		category := req.GetString("category", "")
+		filter := req.GetString("filter", "")
+
+		var filterRe *regexp.Regexp
+		if filter != "" {
+			var err error
+			filterRe, err = regexp.Compile(filter)
+			if err != nil {
+				return nil, fmt.Errorf("invalid filter regex: %w", err)
+			}
+		}
 
 		lists, err := client.ListMailingLists()
 		if err != nil {
@@ -111,6 +125,16 @@ func listMailingListsHandler(client *marc.Client) server.ToolHandlerFunc {
 			var filtered []marc.MailingList
 			for _, l := range lists {
 				if l.Category == category {
+					filtered = append(filtered, l)
+				}
+			}
+			lists = filtered
+		}
+
+		if filterRe != nil {
+			var filtered []marc.MailingList
+			for _, l := range lists {
+				if filterRe.MatchString(l.Name) {
 					filtered = append(filtered, l)
 				}
 			}
