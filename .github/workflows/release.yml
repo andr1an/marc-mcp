@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   BINARY_NAME: "marc-mcp"
 
 jobs:
@@ -112,44 +112,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  source-archives:
-    name: Build source archives
-    needs: [go-tests, nix-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create source archives
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
-          OUTDIR="dist/${VERSION}"
-          mkdir -p "$OUTDIR"
-
-          # Create archives from the repository contents, excluding common junk.
-          # NOTE: GitHub auto-generates Source code (zip/tar.gz) too, but these are your custom-named ones.
-          git ls-files -z \
-            | tar --null -T - -czf "${OUTDIR}/${BINARY_NAME}-${VERSION}-src.tar.gz"
-
-          git ls-files -z \
-            | xargs -0 zip -9 -q "${OUTDIR}/${BINARY_NAME}-${VERSION}-src.zip"
-
-          ls -lah "${OUTDIR}"
-
-      - name: Upload source artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-archives
-          path: dist/${{ github.ref_name }}/${{ env.BINARY_NAME }}-${{ github.ref_name }}-src.*
-          if-no-files-found: error
-          retention-days: 7
-
   release:
     name: Publish GitHub Release
-    needs: [build-binaries, source-archives]
+    needs: [build-binaries]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

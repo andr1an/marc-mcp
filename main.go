@@ -13,6 +13,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// Injected at build time via -X ldflags (see flake.nix / release.yml).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	client, err := marc.NewClient()
 	if err != nil {
@@ -22,7 +29,7 @@ func main() {
 
 	s := server.NewMCPServer(
 		"marc-mcp",
-		"1.0.0",
+		version,
 		server.WithToolCapabilities(true),
 	)
 
@@ -90,6 +97,7 @@ func main() {
 	s.AddTool(searchMessagesTool, searchMessagesHandler(client))
 
 	// Start the server
+	log.Printf("marc-mcp version=%s commit=%s date=%s", version, commit, date)
 	addr := os.Getenv("MCP_ADDR")
 	if addr == "" {
 		addr = ":8080"

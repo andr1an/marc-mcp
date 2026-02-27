@@ -26,7 +26,10 @@
     }: rec {
       default = marc-mcp;
 
-      marc-mcp = pkgs.buildGoModule {
+      marc-mcp = let
+        lmd = self.lastModifiedDate or "19700101000000";
+        buildDate = "${builtins.substring 0 4 lmd}-${builtins.substring 4 2 lmd}-${builtins.substring 6 2 lmd}T${builtins.substring 8 2 lmd}:${builtins.substring 10 2 lmd}:${builtins.substring 12 2 lmd}Z";
+      in pkgs.buildGoModule {
         pname = "marc-mcp";
         version = self.shortRev or "dirty";
         src = self;
@@ -40,12 +43,12 @@
           CGO_ENABLED = "0";
         };
 
-        # Optional: remove this block if you don't have these vars in package main
         ldflags = [
           "-s"
           "-w"
           "-X=main.version=${self.ref or (self.shortRev or "dirty")}"
           "-X=main.commit=${self.rev or (self.shortRev or "dirty")}"
+          "-X=main.date=${buildDate}"
         ];
 
         meta = with pkgs.lib; {
