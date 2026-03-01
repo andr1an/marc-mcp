@@ -53,10 +53,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Build with Nix
-        run: nix develop -c go build -v ./...
+        run: nix build
 
-      - name: Test with Nix
-        run: nix develop -c go test -v ./...
+      - name: Run Nix flake checks
+        run: nix flake check --print-build-logs
 
   build-binaries:
     name: Build binaries / ${{ matrix.goos }}-${{ matrix.goarch }}

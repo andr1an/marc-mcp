@@ -42,5 +42,5 @@ jobs:
       - name: Build with Nix
         run: nix build
 
-      - name: Test with Nix
-        run: nix flake check
+      - name: Run Nix flake checks
+        run: nix flake check --print-build-logs

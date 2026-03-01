@@ -29,45 +29,75 @@
       marc-mcp = let
         lmd = self.lastModifiedDate or "19700101000000";
         buildDate = "${builtins.substring 0 4 lmd}-${builtins.substring 4 2 lmd}-${builtins.substring 6 2 lmd}T${builtins.substring 8 2 lmd}:${builtins.substring 10 2 lmd}:${builtins.substring 12 2 lmd}Z";
-      in pkgs.buildGoModule {
-        pname = "marc-mcp";
-        version = self.shortRev or "dirty";
-        src = self;
+      in
+        pkgs.buildGoModule {
+          pname = "marc-mcp";
+          version = self.shortRev or "dirty";
+          src = self;
 
-        vendorHash = "sha256-hX70z+6h9vf42y8fZu5cjf5UZzImf7hyYDBnHp2F+1Q=";
+          vendorHash = "sha256-hX70z+6h9vf42y8fZu5cjf5UZzImf7hyYDBnHp2F+1Q=";
 
-        subPackages = ["."];
+          subPackages = ["."];
 
-        # Set CGO here (don’t use CGO_ENABLED = 0 as a derivation arg)
-        env = {
-          CGO_ENABLED = "0";
+          # Set CGO here (don’t use CGO_ENABLED = 0 as a derivation arg)
+          env = {
+            CGO_ENABLED = "0";
+          };
+
+          ldflags = [
+            "-s"
+            "-w"
+            "-X=main.version=${self.ref or (self.shortRev or "dirty")}"
+            "-X=main.commit=${self.rev or (self.shortRev or "dirty")}"
+            "-X=main.date=${buildDate}"
+          ];
+
+          meta = with pkgs.lib; {
+            description = "MCP server for marc.info mailing list archive";
+            license = licenses.mit;
+            mainProgram = "marc-mcp";
+          };
         };
+    });
 
-        ldflags = [
-          "-s"
-          "-w"
-          "-X=main.version=${self.ref or (self.shortRev or "dirty")}"
-          "-X=main.commit=${self.rev or (self.shortRev or "dirty")}"
-          "-X=main.date=${buildDate}"
-        ];
-
+    apps = forEachSupportedSystem ({
+      system,
+      pkgs,
+      ...
+    }: {
+      default = {
+        type = "app";
+        program = "${self.packages.${system}.marc-mcp}/bin/marc-mcp";
         meta = with pkgs.lib; {
           description = "MCP server for marc.info mailing list archive";
-          license = licenses.mit; # adjust if needed
+          license = licenses.mit;
           mainProgram = "marc-mcp";
         };
       };
     });
 
-    apps = forEachSupportedSystem ({system, ...}: {
-      default = {
-        type = "app";
-        program = "${self.packages.${system}.marc-mcp}/bin/marc-mcp";
-      };
-    });
-
-    checks = forEachSupportedSystem ({system, ...}: {
+    checks = forEachSupportedSystem ({
+      pkgs,
+      system,
+      ...
+    }: {
       marc-mcp = self.packages.${system}.marc-mcp;
+
+      # Run Go tests
+      tests =
+        pkgs.runCommand "marc-mcp-tests" {
+          nativeBuildInputs = [pkgs.go];
+          src = self;
+          env = {
+            CGO_ENABLED = "0";
+          };
+        } ''
+          export GOCACHE="$TMPDIR/go-cache"
+          export GOMODCACHE="$TMPDIR/go-mod-cache"
+          cd $src
+          go test -v ./...
+          touch $out
+        '';
     });
 
     devShells = forEachSupportedSystem (
@@ -91,6 +121,6 @@
       }
     );
 
-    formatter = forEachSupportedSystem ({pkgs, ...}: pkgs.nixfmt-rfc-style);
+    formatter = forEachSupportedSystem ({pkgs, ...}: pkgs.nixfmt);
   };
 }
