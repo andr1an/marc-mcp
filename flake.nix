@@ -52,6 +52,9 @@
             "-X=main.date=${buildDate}"
           ];
 
+          doCheck = true;
+          checkPhase = ''go test -v ./...'';
+
           meta = with pkgs.lib; {
             description = "MCP server for marc.info mailing list archive";
             license = licenses.mit;
@@ -76,28 +79,8 @@
       };
     });
 
-    checks = forEachSupportedSystem ({
-      pkgs,
-      system,
-      ...
-    }: {
+    checks = forEachSupportedSystem ({system, ...}: {
       marc-mcp = self.packages.${system}.marc-mcp;
-
-      # Run Go tests
-      tests =
-        pkgs.runCommand "marc-mcp-tests" {
-          nativeBuildInputs = [pkgs.go];
-          src = self;
-          env = {
-            CGO_ENABLED = "0";
-          };
-        } ''
-          export GOCACHE="$TMPDIR/go-cache"
-          export GOMODCACHE="$TMPDIR/go-mod-cache"
-          cd $src
-          go test -v ./...
-          touch $out
-        '';
     });
 
     devShells = forEachSupportedSystem (
