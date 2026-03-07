@@ -42,6 +42,7 @@ func TestNewServer(t *testing.T) {
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:8080",
+		AuthMode:        config.AuthDisabled,
 		LogLevel:        "info",
 		MaxHeaderBytes:  1 << 20,
 		ReadTimeout:     0,

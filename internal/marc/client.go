@@ -50,14 +50,7 @@ func getTimeout() time.Duration {
 }
 
 func NewClient() (*Client, error) {
-	level := slog.LevelInfo
-	if os.Getenv("DEBUG") != "" {
-		level = slog.LevelDebug
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: level,
-	}))
+	logger := slog.Default().With("component", "marc")
 
 	opts := cache.Options{
 		Logger: logger,

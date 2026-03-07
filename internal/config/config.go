@@ -1,14 +1,23 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
+const (
+	AuthDisabled = "disabled"
+	AuthJWT      = "jwt"
+)
+
 type Config struct {
 	ListenAddr      string
+	AuthMode        string
+	JWTPublicKey    string
 	LogLevel        string
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
@@ -18,22 +27,11 @@ type Config struct {
 }
 
 func Load() (Config, error) {
-	listenAddr := strings.TrimSpace(os.Getenv("LISTEN_ADDR"))
-	if listenAddr == "" {
-		listenAddr = strings.TrimSpace(os.Getenv("MCP_ADDR"))
-	}
-	if listenAddr == "" {
-		listenAddr = ":8080"
-	}
-
-	logLevel := strings.ToLower(getEnv("LOG_LEVEL", "info"))
-	if strings.TrimSpace(os.Getenv("DEBUG")) != "" {
-		logLevel = "debug"
-	}
-
 	cfg := Config{
-		ListenAddr:      listenAddr,
-		LogLevel:        logLevel,
+		ListenAddr:      getEnv("LISTEN_ADDR", ":8080"),
+		AuthMode:        strings.ToLower(getEnv("AUTH_MODE", AuthDisabled)),
+		JWTPublicKey:    getEnv("JWT_PUBLIC_KEY", ""),
+		LogLevel:        strings.ToLower(getEnv("LOG_LEVEL", "info")),
 		ReadTimeout:     getDurationEnv("READ_TIMEOUT", 15*time.Second),
 		WriteTimeout:    getDurationEnv("WRITE_TIMEOUT", 60*time.Second),
 		IdleTimeout:     getDurationEnv("IDLE_TIMEOUT", 60*time.Second),
@@ -41,7 +39,25 @@ func Load() (Config, error) {
 		MaxHeaderBytes:  getIntEnv("MAX_HEADER_BYTES", 1<<20),
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+func (c Config) Validate() error {
+	switch c.AuthMode {
+	case AuthDisabled:
+		return nil
+	case AuthJWT:
+		if c.JWTPublicKey == "" {
+			return errors.New("JWT_PUBLIC_KEY is required when AUTH_MODE=jwt")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported AUTH_MODE %q", c.AuthMode)
+	}
 }
 
 func (c Config) Address() string {

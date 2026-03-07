@@ -48,9 +48,9 @@ Server defaults to `:8080`.
 | Variable | Description | Default |
 |---|---|---|
 | `LISTEN_ADDR` | Server listen address | `:8080` |
-| `MCP_ADDR` | Backward-compatible fallback for listen address | (used only when `LISTEN_ADDR` is empty) |
+| `AUTH_MODE` | `disabled` or `jwt` | `disabled` |
+| `JWT_PUBLIC_KEY` | RSA public key path for JWT validation | (empty) |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
-| `DEBUG` | If set, forces `LOG_LEVEL=debug` | (disabled) |
 | `MARC_TIMEOUT` | HTTP timeout for marc.info requests | `60s` |
 | `MARC_CACHE_DB` | Custom SQLite cache path | OS user cache dir |
 | `MARC_CACHE_TTL` | Cache TTL (Go duration) | `24h` |
@@ -61,6 +61,23 @@ Server defaults to `:8080`.
 | `MAX_HEADER_BYTES` | Max HTTP header bytes | `1048576` |
 
 `MARC_TIMEOUT` valid range is 10s to 15m.
+
+## Authentication (Optional)
+
+OAuth-style bearer token protection is supported with JWT validation.
+
+Enable with:
+
+```bash
+AUTH_MODE=jwt
+JWT_PUBLIC_KEY=public.pem
+```
+
+Requests must include:
+
+```text
+Authorization: Bearer <token>
+```
 
 ## Endpoints
 

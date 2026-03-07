@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/andr1an/marc-mcp/internal/auth"
 	"github.com/andr1an/marc-mcp/internal/config"
 	"github.com/andr1an/marc-mcp/internal/middleware"
 	"github.com/andr1an/marc-mcp/internal/tools"
@@ -29,6 +30,7 @@ func New(cfg config.Config, logger *slog.Logger, version string) (*Server, error
 		transport.NewMCPHandler(registry, version),
 		middleware.RequestID,
 		middleware.Logging(logger),
+		buildAuthMiddleware(cfg),
 	))
 
 	srv := &http.Server{
@@ -55,6 +57,21 @@ func chain(final http.Handler, mws ...func(http.Handler) http.Handler) http.Hand
 		h = mws[i](h)
 	}
 	return h
+}
+
+func buildAuthMiddleware(cfg config.Config) func(http.Handler) http.Handler {
+	switch cfg.AuthMode {
+	case config.AuthDisabled:
+		return middleware.AuthDisabled
+	case config.AuthJWT:
+		validator, err := auth.NewJWTValidator(cfg.JWTPublicKey)
+		if err != nil {
+			panic(err)
+		}
+		return middleware.AuthJWT(validator)
+	default:
+		return middleware.AuthDisabled
+	}
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
