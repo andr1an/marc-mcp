@@ -35,7 +35,7 @@
           version = self.shortRev or "dirty";
           src = self;
 
-          vendorHash = "sha256-hX70z+6h9vf42y8fZu5cjf5UZzImf7hyYDBnHp2F+1Q=";
+          vendorHash = "sha256-TaA+/I/6QfKztdadza+T5F6LI1IzklgRTJbiHBZEsqk=";
 
           subPackages = ["."];
 
