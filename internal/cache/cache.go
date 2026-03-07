@@ -223,7 +223,7 @@ func (c *Cache) GetMessages(list, month string) ([]Message, bool) {
 	query := "SELECT id, list, subject, author, date FROM messages WHERE list = ? AND updated_at > ?"
 	args := []any{list, cutoff}
 
-	if month != "" {
+	if len(month) == 6 {
 		query += " AND date LIKE ?"
 		// month is YYYYMM, convert to YYYY-MM prefix
 		datePrefix := month[:4] + "-" + month[4:] + "%"

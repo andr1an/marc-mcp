@@ -15,11 +15,11 @@ func TestGetTimeout(t *testing.T) {
 		envValue string
 		want     string // duration string for comparison
 	}{
-		{"default when empty", "", "1m0s"},
+		{"default when empty", "", "2m0s"},
 		{"valid duration", "30s", "30s"},
 		{"minimum enforced", "1s", "10s"},
 		{"maximum enforced", "1h", "15m0s"},
-		{"invalid falls back to default", "invalid", "1m0s"},
+		{"invalid falls back to default", "invalid", "2m0s"},
 	}
 
 	for _, tt := range tests {
@@ -34,6 +34,28 @@ func TestGetTimeout(t *testing.T) {
 			got := getTimeout()
 			if got.String() != tt.want {
 				t.Errorf("getTimeout() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidMonth(t *testing.T) {
+	tests := []struct {
+		month string
+		want  bool
+	}{
+		{"202503", true},
+		{"2025-03", false},
+		{"20253", false},
+		{"abc503", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.month, func(t *testing.T) {
+			got := validMonth(tt.month)
+			if got != tt.want {
+				t.Errorf("validMonth(%q) = %v, want %v", tt.month, got, tt.want)
 			}
 		})
 	}
@@ -409,8 +431,8 @@ func TestMessageLineRegex(t *testing.T) {
 		{"   1. 2026-02-24  [1] message", true},
 		{"  10. 2026-01-15  [2] message", true},
 		{" 100. 2025-12-31  [1] message", true},
-		{"1. 2026-02-24 message", true},        // Regex allows zero leading spaces
-		{"   1 2026-02-24 message", false},     // Missing period
+		{"1. 2026-02-24 message", true},    // Regex allows zero leading spaces
+		{"   1 2026-02-24 message", false}, // Missing period
 		{"not a message line", false},
 		{"", false},
 	}

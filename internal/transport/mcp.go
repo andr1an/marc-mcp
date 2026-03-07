@@ -41,7 +41,7 @@ func NewMCPHandler(registry *tools.Registry, version string) *MCPHandler {
 
 			return &mcp.CallToolResult{
 				Content:           []mcp.Content{mcp.NewTextContent(toJSONString(result))},
-				StructuredContent: result,
+				StructuredContent: toStructuredContent(result),
 			}, nil
 		})
 	}
@@ -72,4 +72,15 @@ func toJSONString(v any) string {
 		return "{}"
 	}
 	return string(b)
+}
+
+func toStructuredContent(v any) map[string]any {
+	// StructuredContent must be an object, not an array
+	// Wrap arrays in a "result" key
+	switch val := v.(type) {
+	case map[string]any:
+		return val
+	default:
+		return map[string]any{"result": v}
+	}
 }

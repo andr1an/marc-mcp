@@ -1,9 +1,11 @@
 package marc
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,9 +20,10 @@ import (
 const (
 	baseURL = "https://marc.info/"
 
-	defaultTimeout = 60 * time.Second
-	minTimeout     = 10 * time.Second
-	maxTimeout     = 15 * time.Minute
+	defaultTimeout  = 2 * time.Minute
+	minTimeout      = 10 * time.Second
+	maxTimeout      = 15 * time.Minute
+	maxFetchRetries = 3
 )
 
 type Client struct {
@@ -99,48 +102,79 @@ type MessageContent struct {
 }
 
 func (c *Client) fetch(path string) (*html.Node, error) {
-	fullURL := baseURL + path
-	c.logger.Debug("fetching", "url", fullURL)
-
-	resp, err := c.http.Get(fullURL)
+	body, err := c.fetchWithRetry(path)
 	if err != nil {
-		c.logger.Debug("fetch failed", "error", err)
-		return nil, fmt.Errorf("fetch failed: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-
-	c.logger.Debug("response", "status", resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
-	return html.Parse(resp.Body)
+	return html.Parse(strings.NewReader(body))
 }
 
 func (c *Client) fetchRaw(path string) (string, error) {
+	return c.fetchWithRetry(path)
+}
+
+func (c *Client) fetchWithRetry(path string) (string, error) {
 	fullURL := baseURL + path
-	c.logger.Debug("fetching raw", "url", fullURL)
+	var lastErr error
 
-	resp, err := c.http.Get(fullURL)
-	if err != nil {
-		c.logger.Debug("fetch failed", "error", err)
-		return "", fmt.Errorf("fetch failed: %w", err)
+	for attempt := 1; attempt <= maxFetchRetries; attempt++ {
+		c.logger.Debug("fetching", "url", fullURL, "attempt", attempt)
+
+		resp, err := c.http.Get(fullURL)
+		if err != nil {
+			lastErr = fmt.Errorf("fetch failed: %w", err)
+			if !isRetryableHTTPError(err) || attempt == maxFetchRetries {
+				c.logger.Debug("fetch failed", "url", fullURL, "attempt", attempt, "error", err)
+				return "", lastErr
+			}
+			time.Sleep(backoffDelay(attempt))
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read failed: %w", readErr)
+			if attempt == maxFetchRetries {
+				return "", lastErr
+			}
+			time.Sleep(backoffDelay(attempt))
+			continue
+		}
+
+		c.logger.Debug("response", "status", resp.StatusCode, "url", fullURL)
+		if resp.StatusCode == http.StatusOK {
+			return string(body), nil
+		}
+
+		lastErr = fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		if !isRetryableStatus(resp.StatusCode) || attempt == maxFetchRetries {
+			return "", fmt.Errorf("%w for %s", lastErr, fullURL)
+		}
+
+		time.Sleep(backoffDelay(attempt))
 	}
-	defer resp.Body.Close()
 
-	c.logger.Debug("response", "status", resp.StatusCode)
+	return "", fmt.Errorf("%w for %s", lastErr, fullURL)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
+func isRetryableHTTPError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
 	}
+	return false
+}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read failed: %w", err)
+func isRetryableStatus(status int) bool {
+	if status == http.StatusTooManyRequests {
+		return true
 	}
+	return status >= 500 && status < 600
+}
 
-	return string(body), nil
+func backoffDelay(attempt int) time.Duration {
+	return time.Duration(1<<(attempt-1)) * 250 * time.Millisecond
 }
 
 func (c *Client) ListMailingLists() ([]MailingList, error) {
@@ -254,6 +288,9 @@ func (c *Client) ListMessagesWithOptions(opts ListMessagesOptions) ([]Message, e
 	if opts.Month == "" {
 		opts.Month = time.Now().Format("200601")
 	}
+	if !validMonth(opts.Month) {
+		return nil, fmt.Errorf("invalid month %q: expected YYYYMM", opts.Month)
+	}
 
 	// Default to page 1
 	if opts.Page < 1 {
@@ -304,6 +341,18 @@ func (c *Client) ListMessagesWithOptions(opts ListMessagesOptions) ([]Message, e
 	c.cache.SetMessages(cacheMessages)
 
 	return messages, nil
+}
+
+func validMonth(month string) bool {
+	if len(month) != 6 {
+		return false
+	}
+	for _, r := range month {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) GetMessage(list, messageID string) (*MessageContent, error) {
