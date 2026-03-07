@@ -8,15 +8,23 @@ import (
 )
 
 var (
-	clientOnce sync.Once
+	clientMu   sync.Mutex
 	clientInst *marc.Client
 	clientErr  error
 )
 
 func getClient() (*marc.Client, error) {
-	clientOnce.Do(func() {
-		clientInst, clientErr = marc.NewClient()
-	})
+	clientMu.Lock()
+	defer clientMu.Unlock()
+
+	if clientInst != nil {
+		return clientInst, nil
+	}
+	if clientErr != nil {
+		return nil, clientErr
+	}
+
+	clientInst, clientErr = marc.NewClient()
 	return clientInst, clientErr
 }
 
@@ -34,8 +42,15 @@ func RegisterBuiltins(registry *Registry) error {
 }
 
 func Close() error {
-	if clientInst == nil {
+	clientMu.Lock()
+	client := clientInst
+	clientInst = nil
+	clientErr = nil
+	clientMu.Unlock()
+
+	if client == nil {
 		return nil
 	}
-	return clientInst.Close()
+
+	return client.Close()
 }

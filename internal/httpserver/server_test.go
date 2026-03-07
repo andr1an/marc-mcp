@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/andr1an/marc-mcp/internal/config"
+	"github.com/andr1an/marc-mcp/internal/tools"
 )
 
 func TestHealthHandler(t *testing.T) {
@@ -33,6 +34,11 @@ func TestHealthHandler(t *testing.T) {
 
 func TestNewServer(t *testing.T) {
 	t.Setenv("MARC_CACHE_DB", filepath.Join(t.TempDir(), "cache.db"))
+	t.Cleanup(func() {
+		if err := tools.Close(); err != nil {
+			t.Fatalf("close tools: %v", err)
+		}
+	})
 
 	cfg := config.Config{
 		ListenAddr:      "127.0.0.1:8080",
