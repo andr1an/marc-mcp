@@ -4,113 +4,110 @@ MCP server for accessing [marc.info](https://marc.info/) mailing list archives.
 
 ## Features
 
+- Streamable HTTP MCP transport (SSE-capable)
 - Browse mailing lists by category or regex filter
-- List messages with pagination
+- List messages with month pagination
 - Fetch full message content
 - Search by subject, author, or body
-- Built-in caching
+- Built-in SQLite cache for scraped results
+
+## Architecture
+
+```text
+main.go
+internal/
+  cache/
+  config/
+  httpserver/
+  marc/
+  middleware/
+  tools/
+  transport/
+```
+
+- `internal/marc`: HTML scraper client for marc.info
+- `internal/cache`: cache + FTS schema
+- `internal/tools`: MCP tool implementations
+- `internal/transport`: Streamable HTTP MCP handler
+- `internal/httpserver`: route wiring (`/health`, `/mcp`)
 
 ## Requirements
 
 - Go 1.25+
-- Nix (optional, for development environment)
 
-## Installation
-
-```bash
-go install github.com/andr1an/marc-mcp@latest
-```
-
-Or build from source:
+## Run
 
 ```bash
-git clone https://github.com/andr1an/marc-mcp
-cd marc-mcp
-go build
+go run .
 ```
 
-With Nix:
-
-```bash
-nix develop --command go build
-```
-
-## Usage
-
-Start the server:
-
-```bash
-./marc-mcp
-```
-
-The server listens on `:8080` by default (streamable HTTP transport).
+Server defaults to `:8080`.
 
 ## Configuration
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `MCP_ADDR` | Server listen address | `:8080` |
+|---|---|---|
+| `LISTEN_ADDR` | Server listen address | `:8080` |
+| `MCP_ADDR` | Backward-compatible fallback for listen address | (used only when `LISTEN_ADDR` is empty) |
+| `LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
+| `DEBUG` | If set, forces `LOG_LEVEL=debug` | (disabled) |
 | `MARC_TIMEOUT` | HTTP timeout for marc.info requests | `60s` |
-| `DEBUG` | Enable debug logging | (disabled) |
+| `MARC_CACHE_DB` | Custom SQLite cache path | OS user cache dir |
+| `MARC_CACHE_TTL` | Cache TTL (Go duration) | `24h` |
+| `READ_TIMEOUT` | HTTP read timeout | `15s` |
+| `WRITE_TIMEOUT` | HTTP write timeout | `60s` |
+| `IDLE_TIMEOUT` | HTTP idle timeout | `60s` |
+| `SHUTDOWN_TIMEOUT` | Graceful shutdown timeout | `10s` |
+| `MAX_HEADER_BYTES` | Max HTTP header bytes | `1048576` |
 
-`MARC_TIMEOUT` accepts Go duration strings (e.g., `30s`, `2m`). Valid range: 10s to 15m.
+`MARC_TIMEOUT` valid range is 10s to 15m.
+
+## Endpoints
+
+- `GET /health`
+- MCP transport at `POST /mcp`
 
 ## Tools
 
-### list_mailing_lists
+### `list_mailing_lists`
 
 List all available mailing lists, optionally filtered by category and/or name regex.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `category` | No | Filter by category (e.g., "Development", "Linux", "Security") |
-| `filter` | No | Filter list names by regular expression (e.g., `^linux`, `git.*`, `kernel`) |
+Parameters:
+- `category` (optional)
+- `filter` (optional, regex)
 
-### list_messages
+### `list_messages`
 
 List messages from a mailing list with pagination.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `list` | Yes | Mailing list name (e.g., "git", "linux-kernel") |
-| `month` | No | Month in YYYYMM format (default: current month) |
-| `page` | No | Page number, 1-based (default: 1) |
-| `limit` | No | Max messages to return (default: all) |
+Parameters:
+- `list` (required)
+- `month` (optional, `YYYYMM`, default current month)
+- `page` (optional, 1-based, default `1`)
+- `limit` (optional)
 
-### get_message
+### `get_message`
 
 Fetch full content of a specific message.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `list` | Yes | Mailing list name |
-| `message_id` | Yes | Message ID from list_messages |
+Parameters:
+- `list` (required)
+- `message_id` (required)
 
-### search_messages
+### `search_messages`
 
 Search messages in a mailing list.
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `list` | Yes | Mailing list name |
-| `query` | Yes | Search query |
-| `search_type` | No | `s` = subject (default), `a` = author, `b` = body |
+Parameters:
+- `list` (required)
+- `query` (required)
+- `search_type` (optional: `s` subject, `a` author, `b` body; default `s`)
 
-## MCP Client Configuration
+## Tests
 
-### Claude Code
-
-Add to `~/.claude/claude_code_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "marc": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
+```bash
+go test ./...
 ```
 
 ## License

@@ -2,18 +2,18 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
-	"regexp"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/andr1an/marc-mcp/internal/marc"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/andr1an/marc-mcp/internal/config"
+	"github.com/andr1an/marc-mcp/internal/httpserver"
+	"github.com/andr1an/marc-mcp/internal/tools"
 )
 
-// Injected at build time via -X ldflags (see flake.nix / release.yml).
 var (
 	version = "dev"
 	commit  = "none"
@@ -21,218 +21,81 @@ var (
 )
 
 func main() {
-	client, err := marc.NewClient()
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("version=%s commit=%s date=%s\n", version, commit, date)
+		return
+	}
+
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("failed to create client: %v", err)
-	}
-	defer client.Close()
-
-	s := server.NewMCPServer(
-		"marc-mcp",
-		version,
-		server.WithToolCapabilities(true),
-	)
-
-	// list_mailing_lists tool
-	listMailingListsTool := mcp.NewTool("list_mailing_lists",
-		mcp.WithDescription("List all available mailing lists from marc.info, optionally filtered by category or name regex"),
-		mcp.WithString("category",
-			mcp.Description("Filter by category name (e.g., 'Development', 'Linux', 'Security')"),
-		),
-		mcp.WithString("filter",
-			mcp.Description("Filter list names by regular expression (e.g., 'git.*', '^linux', 'kernel')"),
-		),
-	)
-	s.AddTool(listMailingListsTool, listMailingListsHandler(client))
-
-	// list_messages tool
-	listMessagesTool := mcp.NewTool("list_messages",
-		mcp.WithDescription("List messages from a mailing list. Defaults to current month. Each page has ~30 messages."),
-		mcp.WithString("list",
-			mcp.Required(),
-			mcp.Description("Name of the mailing list (e.g., 'git', 'linux-kernel')"),
-		),
-		mcp.WithString("month",
-			mcp.Description("Month in YYYYMM format (e.g., '202602'). Defaults to current month."),
-		),
-		mcp.WithNumber("page",
-			mcp.Description("Page number (1-based, default: 1). Each page has ~30 messages."),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of messages to return from this page (default: all)"),
-		),
-	)
-	s.AddTool(listMessagesTool, listMessagesHandler(client))
-
-	// get_message tool
-	getMessageTool := mcp.NewTool("get_message",
-		mcp.WithDescription("Get the full content of a specific message"),
-		mcp.WithString("list",
-			mcp.Required(),
-			mcp.Description("Name of the mailing list"),
-		),
-		mcp.WithString("message_id",
-			mcp.Required(),
-			mcp.Description("Message ID from list_messages results"),
-		),
-	)
-	s.AddTool(getMessageTool, getMessageHandler(client))
-
-	// search_messages tool
-	searchMessagesTool := mcp.NewTool("search_messages",
-		mcp.WithDescription("Search messages in a mailing list"),
-		mcp.WithString("list",
-			mcp.Required(),
-			mcp.Description("Name of the mailing list to search"),
-		),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Search query string"),
-		),
-		mcp.WithString("search_type",
-			mcp.Description("Type of search: 's' for subject (default), 'a' for author, 'b' for body"),
-			mcp.Enum("s", "a", "b"),
-		),
-	)
-	s.AddTool(searchMessagesTool, searchMessagesHandler(client))
-
-	// Start the server
-	log.Printf("marc-mcp version=%s commit=%s date=%s", version, commit, date)
-	addr := os.Getenv("MCP_ADDR")
-	if addr == "" {
-		addr = ":8080"
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
-	httpServer := server.NewStreamableHTTPServer(s)
-	log.Printf("Starting MCP server on %s", addr)
-	if err := httpServer.Start(addr); err != nil {
-		log.Fatal(err)
+	logger := newLogger(cfg.LogLevel)
+	slog.SetDefault(logger)
+
+	srv, err := httpserver.New(cfg, logger, version)
+	if err != nil {
+		logger.Error("failed to build server", "error", err)
+		os.Exit(1)
 	}
+
+	go func() {
+		logger.Info("starting server",
+			"addr", srv.Addr,
+			"version", version,
+			"commit", commit,
+			"date", date,
+			"read_timeout", cfg.ReadTimeout,
+			"write_timeout", cfg.WriteTimeout,
+			"idle_timeout", cfg.IdleTimeout,
+		)
+
+		if err := srv.ListenAndServe(); err != nil && err.Error() != "http: Server closed" {
+			logger.Error("server exited with error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	waitForShutdown(logger, srv, cfg.ShutdownTimeout)
 }
 
-func listMailingListsHandler(client *marc.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		category := req.GetString("category", "")
-		filter := req.GetString("filter", "")
+func newLogger(level string) *slog.Logger {
+	var slogLevel slog.Level
 
-		var filterRe *regexp.Regexp
-		if filter != "" {
-			var err error
-			filterRe, err = regexp.Compile(filter)
-			if err != nil {
-				return nil, fmt.Errorf("invalid filter regex: %w", err)
-			}
-		}
-
-		lists, err := client.ListMailingLists()
-		if err != nil {
-			return nil, fmt.Errorf("failed to list mailing lists: %w", err)
-		}
-
-		if category != "" {
-			var filtered []marc.MailingList
-			for _, l := range lists {
-				if l.Category == category {
-					filtered = append(filtered, l)
-				}
-			}
-			lists = filtered
-		}
-
-		if filterRe != nil {
-			var filtered []marc.MailingList
-			for _, l := range lists {
-				if filterRe.MatchString(l.Name) {
-					filtered = append(filtered, l)
-				}
-			}
-			lists = filtered
-		}
-
-		data, err := json.MarshalIndent(lists, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-
-		return mcp.NewToolResultText(string(data)), nil
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
 	}
+
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slogLevel})
+	return slog.New(handler)
 }
 
-func listMessagesHandler(client *marc.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		list, err := req.RequireString("list")
-		if err != nil {
-			return nil, err
-		}
+func waitForShutdown(logger *slog.Logger, srv *httpserver.Server, timeout time.Duration) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-		opts := marc.ListMessagesOptions{
-			List:  list,
-			Month: req.GetString("month", ""),
-			Page:  req.GetInt("page", 1),
-			Limit: req.GetInt("limit", 0),
-		}
+	<-ctx.Done()
+	logger.Info("shutdown signal received")
 
-		messages, err := client.ListMessagesWithOptions(opts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list messages: %w", err)
-		}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-		data, err := json.MarshalIndent(messages, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-
-		return mcp.NewToolResultText(string(data)), nil
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
 	}
-}
 
-func getMessageHandler(client *marc.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		list, err := req.RequireString("list")
-		if err != nil {
-			return nil, err
-		}
-		messageID, err := req.RequireString("message_id")
-		if err != nil {
-			return nil, err
-		}
-
-		message, err := client.GetMessage(list, messageID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get message: %w", err)
-		}
-
-		data, err := json.MarshalIndent(message, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-
-		return mcp.NewToolResultText(string(data)), nil
+	if err := tools.Close(); err != nil {
+		logger.Error("failed to close marc client", "error", err)
 	}
-}
 
-func searchMessagesHandler(client *marc.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		list, err := req.RequireString("list")
-		if err != nil {
-			return nil, err
-		}
-		query, err := req.RequireString("query")
-		if err != nil {
-			return nil, err
-		}
-		searchType := req.GetString("search_type", "s")
-
-		messages, err := client.Search(list, query, searchType)
-		if err != nil {
-			return nil, fmt.Errorf("failed to search messages: %w", err)
-		}
-
-		data, err := json.MarshalIndent(messages, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-
-		return mcp.NewToolResultText(string(data)), nil
-	}
+	logger.Info("server stopped")
 }

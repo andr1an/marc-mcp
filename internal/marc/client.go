@@ -59,9 +59,18 @@ func NewClient() (*Client, error) {
 		Level: level,
 	}))
 
-	c, err := cache.New(cache.Options{
+	opts := cache.Options{
 		Logger: logger,
-	})
+		DBPath: os.Getenv("MARC_CACHE_DB"),
+	}
+
+	if ttlEnv := os.Getenv("MARC_CACHE_TTL"); ttlEnv != "" {
+		if ttl, err := time.ParseDuration(ttlEnv); err == nil {
+			opts.TTL = ttl
+		}
+	}
+
+	c, err := cache.New(opts)
 	if err != nil {
 		return nil, fmt.Errorf("init cache: %w", err)
 	}
