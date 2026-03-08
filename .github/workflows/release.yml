@@ -34,10 +34,10 @@ jobs:
           cache: true
 
       - name: Build
-        run: go build -v ./...
+        run: make build
 
       - name: Test
-        run: go test -v ./...
+        run: make test
 
   nix-tests:
     name: Tests (Nix) / ${{ matrix.os }}
@@ -59,18 +59,23 @@ jobs:
         run: nix flake check --print-build-logs
 
   build-binaries:
-    name: Build binaries / ${{ matrix.goos }}-${{ matrix.goarch }}
+    name: Build release binaries / ${{ matrix.os }}-${{ matrix.goarch }}
     needs: [go-tests, nix-tests]
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
-        exclude:
-          # Keep/remove depending on whether you want Windows ARM64 builds
-          - goos: windows
+        include:
+          - os: ubuntu-latest
+            goarch: amd64
+          - os: ubuntu-24.04-arm
             goarch: arm64
+          - os: macos-13
+            goarch: amd64
+          - os: macos-14
+            goarch: arm64
+          - os: windows-latest
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,33 +87,39 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build
+      - name: Build native target
+        run: |
+          make clean
+          make build VERSION="${GITHUB_REF_NAME}" COMMIT="${GITHUB_SHA}"
+
+      - name: Prepare dist
         shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
-          OUTDIR="dist/${VERSION}"
-          mkdir -p "$OUTDIR"
+          OS="$(go env GOOS)"
+          ARCH="$(go env GOARCH)"
+          if [ "$ARCH" != "${{ matrix.goarch }}" ]; then
+            echo "Runner GOARCH ($ARCH) does not match matrix.goarch (${{ matrix.goarch }})"
+            exit 1
+          fi
+          OUT="${BINARY_NAME}-${OS}-${ARCH}"
+          if [ "$OS" = "windows" ]; then
+            OUT="${OUT}.exe"
+            BIN="${BINARY_NAME}.exe"
+          else
+            BIN="${BINARY_NAME}"
+          fi
 
-          EXT=""
-          if [[ "${GOOS}" == "windows" ]]; then EXT=".exe"; fi
-
-          CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
-            go build -trimpath \
-              -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              -o "${OUTDIR}/${BINARY_NAME}_${GOOS}_${GOARCH}${EXT}" \
-              .
-
-          ls -lah "${OUTDIR}"
+          mkdir -p "dist/${VERSION}"
+          mv "${BIN}" "dist/${VERSION}/${OUT}"
+          ls -lah "dist/${VERSION}"
 
       - name: Upload binaries artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bin-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/${{ github.ref_name }}/${{ env.BINARY_NAME }}_${{ matrix.goos }}_${{ matrix.goarch }}*
+          name: bin-${{ matrix.os }}-${{ matrix.goarch }}
+          path: dist/${{ github.ref_name }}/${{ env.BINARY_NAME }}-*
           if-no-files-found: error
           retention-days: 7
 

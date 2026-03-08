@@ -4,18 +4,21 @@ MCP server for accessing [marc.info](https://marc.info/) mailing list archives.
 
 ## Features
 
-- Streamable HTTP MCP transport (SSE-capable)
-- Browse mailing lists by category or regex filter
-- List messages with month pagination
-- Fetch full message content
-- Search by subject, author, or body
-- Built-in SQLite cache for scraped results
+- Streamable HTTP MCP transport (stateless, SSE-capable)
+- Browse mailing lists by category and/or regex filter
+- List messages by month with page + per-page limit controls
+- Fetch full message content (headers + body)
+- Search within a list by subject, author, or body
+- Built-in SQLite cache with TTL for scraped results
+- Automatic retry with backoff for transient upstream errors
+- Optional JWT bearer-token authentication
 
 ## Architecture
 
 ```text
 main.go
 internal/
+  auth/
   cache/
   config/
   httpserver/
@@ -35,13 +38,28 @@ internal/
 
 - Go 1.25+
 
+## Development
+
+```bash
+make test
+make build
+```
+
+Available targets:
+
+- `make test` - run unit tests
+- `make build` - build local binary `./marc-mcp`
+- `make build-all` - cross-build `marc-mcp-{os}-{arch}` binaries
+- `make print-version` - print linker version variables
+- `make clean` - remove generated binaries
+
 ## Run
 
 ```bash
 go run .
 ```
 
-Server defaults to `:8080`.
+Server defaults to `:8080`. `make build` produces a `marc-mcp` binary in the project root.
 
 ## Configuration
 
@@ -51,8 +69,8 @@ Server defaults to `:8080`.
 | `AUTH_MODE` | `disabled` or `jwt` | `disabled` |
 | `JWT_PUBLIC_KEY` | RSA public key path for JWT validation | (empty) |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error` | `info` |
-| `MARC_TIMEOUT` | HTTP timeout for marc.info requests | `60s` |
-| `MARC_CACHE_DB` | Custom SQLite cache path | OS user cache dir |
+| `MARC_TIMEOUT` | HTTP timeout for marc.info requests | `2m` |
+| `MARC_CACHE_DB` | Custom SQLite cache path | OS user cache dir + `/marc-mcp/cache.db` |
 | `MARC_CACHE_TTL` | Cache TTL (Go duration) | `24h` |
 | `READ_TIMEOUT` | HTTP read timeout | `15s` |
 | `WRITE_TIMEOUT` | HTTP write timeout | `60s` |
@@ -64,7 +82,7 @@ Server defaults to `:8080`.
 
 ## Authentication (Optional)
 
-OAuth-style bearer token protection is supported with JWT validation.
+Bearer token protection is supported with JWT validation.
 
 Enable with:
 
@@ -82,7 +100,7 @@ Authorization: Bearer <token>
 ## Endpoints
 
 - `GET /health`
-- MCP transport at `POST /mcp`
+- MCP Streamable HTTP transport at `/mcp`
 
 ## Tools
 
@@ -124,7 +142,7 @@ Parameters:
 ## Tests
 
 ```bash
-go test ./...
+make test
 ```
 
 ## License
